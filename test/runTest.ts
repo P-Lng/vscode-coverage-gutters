@@ -10,7 +10,17 @@ async function main() {
             version: "insiders",
             extensionDevelopmentPath,
             extensionTestsPath,
-            launchArgs: ["example/example.code-workspace"],
+            launchArgs: [
+                "example/example.code-workspace",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--disable-updates",
+                "--skip-welcome",
+                "--skip-release-notes",
+                "--disable-workspace-trust",
+                "--enable-features=UseOzonePlatform",
+                "--ozone-platform=headless",
+            ],
         })
 
         console.info("Success!");
