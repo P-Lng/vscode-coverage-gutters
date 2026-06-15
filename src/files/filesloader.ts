@@ -1,6 +1,5 @@
 import { existsSync, readFile } from "fs";
-import glob from "glob";
-import { window, workspace, WorkspaceFolder } from "vscode";
+import { RelativePattern, window, workspace, WorkspaceFolder } from "vscode";
 import { Config } from "../extension/config";
 
 export class FilesLoader {
@@ -88,32 +87,20 @@ export class FilesLoader {
             });
     }
 
-    private globFind(
+    private async globFind(
         workspaceFolder: WorkspaceFolder,
         fileName: string,
-    ) {
-        return new Promise<Set<string>>((resolve) => {
-            glob(`${this.configStore.coverageBaseDir}/${fileName}`,
-                {
-                    cwd: workspaceFolder.uri.fsPath,
-                    dot: true,
-                    ignore: this.configStore.ignoredPathGlobs,
-                    realpath: true,
-                    strict: false,
-                },
-                (err, files) => {
-                    if (!files || !files.length) {
-                        // Show any errors if no file was found.
-                        if (err) {
-                            window.showWarningMessage(`An error occured while looking for the coverage file ${err}`);
-                        }
-                        return resolve(new Set());
-                    }
-                    const setFiles = new Set<string>();
-                    files.forEach((file) => setFiles.add(file));
-                    return resolve(setFiles);
-                },
-            );
-        });
+    ): Promise<Set<string>> {
+        const pattern = new RelativePattern(
+            workspaceFolder,
+            `${this.configStore.coverageBaseDir}/${fileName}`,
+        );
+        try {
+            const uris = await workspace.findFiles(pattern, this.configStore.ignoredPathGlobs);
+            return new Set(uris.map((uri) => uri.fsPath));
+        } catch {
+            window.showWarningMessage("An error occurred while looking for the coverage file");
+            return new Set<string>();
+        }
     }
 }

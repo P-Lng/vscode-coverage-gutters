@@ -37,6 +37,8 @@ export class CoverageService {
     private sectionFinder: SectionFinder;
 
     private cache: Map<string, Section>;
+    private coverageFiles = new Set<string>();
+    private discovered = false;
 
     constructor(
         configStore: Config,
@@ -61,9 +63,13 @@ export class CoverageService {
     }
 
     public dispose() {
+        // Reset state before disposing watchers so any in-flight callbacks
+        // that complete after dispose() see a clean slate.
+        this.discovered = false;
+        this.coverageFiles = new Set();
+        this.cache = new Map();
         if (this.coverageWatcher) { this.coverageWatcher.dispose(); }
         if (this.editorWatcher) { this.editorWatcher.dispose(); }
-        this.cache = new Map(); // reset cache to empty
         this.renderer.renderCoverage(this.cache, window.visibleTextEditors);
     }
 
@@ -98,14 +104,22 @@ export class CoverageService {
 
     private async loadCache() {
         this.updateServiceState(Status.loading);
-        const files = await this.filesLoader.findCoverageFiles();
-        this.outputChannel.appendLine(
-            `[${Date.now()}][coverageservice]: Loading ${files.size} file(s)`,
-        );
-        this.outputChannel.appendLine(
-            `[${Date.now()}][coverageservice]: ${Array.from(files.values())}`,
-        );
-        const dataFiles = await this.filesLoader.loadDataFiles(files);
+        if (!this.discovered) {
+            const files = await this.filesLoader.findCoverageFiles();
+            if (!files.size) {
+                this.updateServiceState(Status.ready);
+                return;
+            }
+            this.outputChannel.appendLine(
+                `[${Date.now()}][coverageservice]: Loading ${files.size} file(s)`,
+            );
+            this.outputChannel.appendLine(
+                `[${Date.now()}][coverageservice]: ${Array.from(files.values())}`,
+            );
+            this.coverageFiles = files;
+            this.discovered = true;
+        }
+        const dataFiles = await this.filesLoader.loadDataFiles(this.coverageFiles);
         this.outputChannel.appendLine(
             `[${Date.now()}][coverageservice]: Loaded ${dataFiles.size} data file(s)`,
         );
@@ -161,9 +175,20 @@ export class CoverageService {
         this.outputChannel.appendLine(outputMessage);
 
         this.coverageWatcher = workspace.createFileSystemWatcher(blobPattern);
-        this.coverageWatcher.onDidChange(this.loadCacheAndProcess.bind(this));
-        this.coverageWatcher.onDidCreate(this.loadCacheAndProcess.bind(this));
-        this.coverageWatcher.onDidDelete(this.loadCacheAndProcess.bind(this));
+        this.coverageWatcher.onDidChange(async (uri) => {
+            // File content changed — path is already known, just reload.
+            // Add defensively in case discovery missed it.
+            this.coverageFiles.add(uri.fsPath);
+            await this.loadCacheAndProcess();
+        });
+        this.coverageWatcher.onDidCreate(async (uri) => {
+            this.coverageFiles.add(uri.fsPath);
+            await this.loadCacheAndProcess();
+        });
+        this.coverageWatcher.onDidDelete(async (uri) => {
+            this.coverageFiles.delete(uri.fsPath);
+            await this.loadCacheAndProcess();
+        });
     }
 
     private setStatusBarCoverage(sections: Map<string, Section>, textEditor: TextEditor | undefined ) {
